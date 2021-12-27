@@ -1,0 +1,9 @@
+#!/bin/sh
+#SBATCH --account=cm30225
+#SBATCH --partition=teaching
+#SBATCH --job-name=Relaxation
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=8
+#SBATCH --time=00:01:00
+
+mpirun ./relaxation

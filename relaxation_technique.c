@@ -45,7 +45,7 @@ double* makeMatrix() {
 
 // Main function
 int main(int argc, char** argv) {
-    MPI_Init(NULL, NULL);
+    MPI_Init(&argc, &argv);
     int rank;
     int world;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
