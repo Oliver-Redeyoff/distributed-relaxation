@@ -5,3 +5,4 @@ typedef struct block {
 } BLOCK;
 
 double* makeMatrix();
+void printMatrix();

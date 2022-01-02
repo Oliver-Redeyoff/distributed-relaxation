@@ -9,10 +9,10 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <math.h>
 #include <mpi.h>
 
 
-int thread_count;
 int decimal_precision;
 double decimal_value;
 int value_change_flag;
@@ -43,20 +43,46 @@ double* makeMatrix() {
 }
 
 
+// Prints out matrix as table, and highlights each block
+void printMatrix() {
+    for (int i=0 ; i<matrix_size ; i++) {
+        printf("\n");
+        for (int j=0 ; j<matrix_size ; j++){
+            int index = i*matrix_size + j;
+            printf("%f, ", matrix[i*matrix_size + j]);
+        }
+    }
+    printf("\n\n");
+}
+
+
 // Main function
 int main(int argc, char** argv) {
 
+    // Initialise MPI
     MPI_Init(&argc, &argv);
-
-    matrix = makeMatrix();
-
     int rank;
     int world;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world);
-    printf("Hello: rank %d, world: %d\n",rank, world);
-    MPI_Finalize();
 
+    // Initialise global variables
+    matrix_size = atoi(argv[1]);
+    decimal_precision = atoi(argv[2]);
+    decimal_value = pow(0.1, decimal_precision);
+    matrix = makeMatrix();
+
+
+    // Relaxation start
+    //----------------------------
+    //printf("Hello: rank %d, world: %d\n", rank, world);
+    MPI_Bcast(matrix, matrix_size*matrix_size, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    printf("From rank %d\n", rank);
+    printMatrix();
+    //----------------------------
+    
+    
+    MPI_Finalize();
     return 0;
 
 }
