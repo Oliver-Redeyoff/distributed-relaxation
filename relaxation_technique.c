@@ -2,6 +2,9 @@
 * Parallel relaxation technique with a distributed memory architecture
 * Oliver Redeyoff
 *
+* mpicc -Wall -o hellompi relaxation_technique.c -lm
+* mpirun ./hellompi 20 2
+*
 * Strategy:
 *
 *
