@@ -246,7 +246,7 @@ int main(int argc, char** argv) {
     }
     //----------------------------
 
-    printMatrix(matrix, matrix_size*matrix_size);
+    //printMatrix(matrix, matrix_size*matrix_size);
     printf("Took %f to complete\n", end_time-start_time);
     
     MPI_Abort(MPI_COMM_WORLD, 1);
