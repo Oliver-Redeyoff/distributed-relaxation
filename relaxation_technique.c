@@ -2,8 +2,10 @@
 * Parallel relaxation technique with a distributed memory architecture
 * Oliver Redeyoff
 *
-* mpicc -Wall -o hellompi relaxation_technique.c -lm
-* mpirun ./hellompi 20 2
+* How to run:
+* > mpicc -Wall -o relaxation relaxation_technique.c -lm
+* > mpirun ./relaxation 100 3
+* where 100 is the size of the matrix and 3 is the decimal precision
 *
 * Strategy:
 *
@@ -17,14 +19,16 @@
 #include <mpi.h>
 #include "relaxation_technique.h"
 
+// Global variables
 int consumer_count;
 int decimal_precision;
 double decimal_value;
 int matrix_size;
 
 
-// Returns array of doubles of length matrix_size^2
+// Create array of doubles of length matrix_size^2
 double* makeMatrix() {
+
     // allocate memory for new matrix of given size
     double* matrix = malloc(matrix_size*matrix_size*sizeof(double));
 
@@ -43,26 +47,30 @@ double* makeMatrix() {
     }
 
     return matrix;
+
 }
 
 
-// Returns thread_count number of blocks which each contain a start_row, an
-// end_row. No blocks overlap and they cover all the mutable rows of the
-// array
+// Function for workload allocation, creates a block for each consumers
 BLOCK* makeBlocks() {
 
-    // allocate enough space for as many blocks as there are processes
+    // allocate enough space for as many blocks as there are consumer processes
     BLOCK* blocks = malloc(consumer_count*sizeof(BLOCK));
 
+    // the fist and last row are not mutable, so do not allocate them
     int mutable_matrix_size = matrix_size-2;
 
     // get biggest size that blocks can be while remaining equally sized
     int block_size = floor((double)mutable_matrix_size/(double)consumer_count);
+
     // get the remainder of rows
     int extra = mutable_matrix_size%consumer_count;
+
     // get the number of blocks which will be sized equally
     int equal_block_count = (mutable_matrix_size-extra) / block_size;
 
+
+    // create as many equally sized blocks as possible
     for(int i=0 ; i<equal_block_count ; i++) {
         BLOCK new_block;
         new_block.start_row = block_size*i + 1;
@@ -93,30 +101,42 @@ BLOCK* makeBlocks() {
     }
 
     return blocks;
+
 }
 
 
-// Perform relaxation iteration on a matrix
+// Perform relaxation iteration on a block
 void relaxMatrix(BLOCK* block) {
 
-    double* old_padded_matrix = block->input_matrix;
-    double* new_matrix = block->output_matrix + 1;
+    // we will use old_matrix to calculate new values, which we will put in new_matrix
+
+    // old_matrix contains the row preceding the block and following the block, as these
+    // are needed to compute the averages along the top and bottom edge of the block
+    double* old_matrix = block->input_matrix;
+    // the first cell of output_matrix is used as a flag which indicates if any of the
+    // new values have changed to the given precision compared to the values in the input_matrix,
+    // so we store the new_matrix values starting at output_matrix+1
+    double* new_matrix = block->output_matrix+1;
 
     int value_changed_flag = 0.0;
 
     for (int i=0 ; i<block->output_matrix_size-1 ; i++) {
+        // only modify non edge values
         if (i%matrix_size != 0 && (i+1)%matrix_size != 0) {
-            double new_value = getSuroundingAverage(&old_padded_matrix[matrix_size+i]);
-            double diff = new_value - old_padded_matrix[matrix_size+i];
+            // compute new value and check if it differs from the previous value to the
+            // given precision
+            double new_value = getSuroundingAverage(&old_matrix[matrix_size+i]);
+            double diff = new_value - old_matrix[matrix_size+i];
             if (diff > decimal_value) {
                 value_changed_flag = 1.0;
             }
             new_matrix[i] = new_value;
         } else {
-            new_matrix[i] = old_padded_matrix[matrix_size+i];
+            new_matrix[i] = old_matrix[matrix_size+i];
         }
     }
 
+    // set the value changed flag in the output_matrix
     block->output_matrix[0] = value_changed_flag;
 
 }
@@ -133,7 +153,7 @@ double getSuroundingAverage(double* cell) {
 }
 
 
-// Prints out matrix as table, and highlights each block
+// Prints out given matrix
 void printMatrix(double* matrix, int length) {
     for (int i=0 ; i<length ; i++) {
         if (i%matrix_size == 0) {
@@ -146,7 +166,7 @@ void printMatrix(double* matrix, int length) {
 }
 
 
-// Prints info on the created blocks
+// Prints info on given blocks
 void printBlocks(BLOCK* blocks) {
     for (int i=0 ; i<consumer_count ; i++) {
         printf("Block %d:\n", i);
@@ -181,8 +201,8 @@ int main(int argc, char** argv) {
     //----------------------------
     BLOCK* blocks = makeBlocks();
 
+    // start timer
     if (rank == 0) {
-        //printBlocks(blocks);
         start_time = MPI_Wtime();
     }
 
@@ -191,37 +211,45 @@ int main(int argc, char** argv) {
         my_block = blocks[rank-1];
     }
 
-    // relaxation loop, do this until the values are unchanged to given precision
+
+    // relaxation loop, do this until all the values are unchanged to given precision
     while (1) {
 
         // process with rank 0 is provider, other processes are consumers
+        // this is the logic for the provider
         if (rank == 0) {
 
-            // send appropriate rows to each consumer
+            // send appropriate section of the matrix to each consumer
             for (int i=0 ; i<consumer_count ; i++) {
+
                 double* start_pointer = matrix + matrix_size * (blocks[i].start_row-1);
                 MPI_Send(start_pointer, blocks[i].input_matrix_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD);
+
             }
 
-            // then get responses from each consumer
+
+            // get processed sections of the matrix from each consumer
             int block_changed_flag = 0;
             for (int i=0 ; i<consumer_count ; i++) {
+
                 double* start_pointer = matrix + matrix_size * blocks[i].start_row - 1;
                 double start_value = *start_pointer;
                 
                 MPI_Status stat;
                 MPI_Recv(start_pointer, blocks[i].output_matrix_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD, &stat);
 
+                // check the value_changed_flag to see if the new block has differed from the previous iteration's one
+                // to the given precision
                 int value_changed_flag = (int)*start_pointer;
-                *start_pointer = start_value;
-
                 if (value_changed_flag == 1) {
                     block_changed_flag = 1;
                 }
+                *start_pointer = start_value;
+
             }
 
+            // exit the loop if no block differs to the given precision from the previous iteration
             if (block_changed_flag == 0) {
-                end_time = MPI_Wtime();
                 break;
             }
 
@@ -229,26 +257,34 @@ int main(int argc, char** argv) {
             // system("clear");
             // printMatrix(matrix, matrix_size*matrix_size);
 
-        } else {
+        }
+        
 
-            // receive new block from provider
+        // this is the logic for the consumers
+        if (rank != 0) {
+
+            // receive assigned block from provider
             MPI_Status stat;
             MPI_Recv(my_block.input_matrix, my_block.input_matrix_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD, &stat);
 
             // perform relaxation on assigned block, detect if any value has changed
             relaxMatrix(&my_block);
 
-            // communicate relaxed block back to provider
+            // communicate processed block back to provider
             MPI_Send(my_block.output_matrix, my_block.output_matrix_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD);
 
         }
 
     }
-    //----------------------------
+
+
+    // end timer
+    end_time = MPI_Wtime();
 
     //printMatrix(matrix, matrix_size*matrix_size);
     printf("Took %f to complete\n", end_time-start_time);
     
+    // terminate MPI processes
     MPI_Abort(MPI_COMM_WORLD, 1);
     MPI_Finalize();
     return 1;
