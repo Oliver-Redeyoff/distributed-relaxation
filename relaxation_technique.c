@@ -166,7 +166,7 @@ int main(int argc, char** argv) {
                 int block_size = matrix_size * (blocks[i].end_row - blocks[i].start_row);
                 double* block_start_pointer = matrix + matrix_size * blocks[i].start_row;
                 MPI_Status stat;
-                MPI_Recv(block_start_pointer, block_size, MPI_DOUBLE, MPI_ANY_SOURCE, 99, MPI_COMM_WORLD, &stat);
+                MPI_Recv(block_start_pointer, block_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD, &stat);
                 printf("Provider received response from consumer %d\n", stat.MPI_SOURCE);
             }
 
