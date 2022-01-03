@@ -139,14 +139,12 @@ int main(int argc, char** argv) {
     }
     //printf("Hello: rank %d, world: %d\n", rank, world);
 
-    BLOCK my_block;
     int my_padded_block_size;
-    double* my_padded_matrix;
+    double* my_padded_block;
     
     if (rank != 0) {
-        my_block = blocks[rank-1];
-        my_padded_block_size = matrix_size * (my_block.end_row - my_block.start_row + 2);
-        my_padded_matrix = (double*)malloc(my_padded_block_size*sizeof(double));
+        my_padded_block_size = matrix_size * (blocks[rank-1].end_row - blocks[rank-1].start_row + 2);
+        my_padded_block = (double*)malloc(my_padded_block_size*sizeof(double));
     }
 
     // relaxation loop, do this until the values are unchanged to given precision
@@ -158,17 +156,17 @@ int main(int argc, char** argv) {
             // send appropriate rows to each consumer
             for (int i=0 ; i<consumer_count ; i++) {
                 int padded_block_size = matrix_size * (blocks[i].end_row - blocks[i].start_row + 2);
-                double* padded_matrix_start_pointer = matrix + matrix_size * (blocks[i].start_row-1);
+                double* padded_block_start_pointer = matrix + matrix_size * (blocks[i].start_row-1);
                 printf("Provider sending block to rank %d\n", i+1);
-                MPI_Send(padded_matrix_start_pointer, padded_block_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD);
+                MPI_Send(padded_block_start_pointer, padded_block_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD);
             }
 
             // then get responses from each consumer
             for (int i=0 ; i<consumer_count ; i++) {
-                int block_size = matrix_size * (blocks[i].end_row - blocks[i].start_row + 2);
-                double* start_pointer = matrix + matrix_size * (blocks[i].start_row-1);
+                int block_size = matrix_size * (blocks[i].end_row - blocks[i].start_row);
+                double* block_start_pointer = matrix + matrix_size * blocks[i].start_row;
                 MPI_Status stat;
-                MPI_Recv(start_pointer, block_size, MPI_DOUBLE, MPI_ANY_SOURCE, 99, MPI_COMM_WORLD, &stat);
+                MPI_Recv(block_start_pointer, block_size, MPI_DOUBLE, MPI_ANY_SOURCE, 99, MPI_COMM_WORLD, &stat);
                 printf("Provider received response from consumer %d\n", stat.MPI_SOURCE);
             }
 
@@ -176,13 +174,14 @@ int main(int argc, char** argv) {
 
             // receive new block from provider
             MPI_Status stat;
-            MPI_Recv(my_padded_matrix, my_padded_block_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD, &stat);
+            MPI_Recv(my_padded_block, my_padded_block_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD, &stat);
             printf("Consumer %d received block\n", rank);
 
             // communicate back to provider
             printf("Consumer %d sending response\n", rank);
-            double* mutated_matrix_start = my_padded_matrix + matrix_size;
-            MPI_Send(mutated_matrix_start, my_padded_block_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD);
+            double* block_start = my_padded_block + matrix_size;
+            int block_size = my_padded_block_size - matrix_size*2;
+            MPI_Send(block_start, block_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD);
 
         }
 
