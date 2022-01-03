@@ -1,8 +1,8 @@
 typedef struct block {
-    int start_index;
-    int end_index;
-    double* new_values;
+    int start_row;
+    int end_row;
 } BLOCK;
 
 double* makeMatrix();
+BLOCK* makeBlocks();
 void printMatrix();
