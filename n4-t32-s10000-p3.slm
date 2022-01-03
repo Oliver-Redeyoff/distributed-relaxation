@@ -1,10 +1,10 @@
 #!/bin/sh
 #SBATCH --account=cm30225
 #SBATCH --partition=teaching
-#SBATCH --job-name=n2-t8-s2500-p3
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=8
+#SBATCH --job-name=n4-t32-s10000-p3
+#SBATCH --nodes=4
+#SBATCH --ntasks-per-node=32
 #SBATCH --time=00:10:00
 
 mpicc -Wall -o relaxation relaxation_technique.c -lm
-mpirun ./relaxation 25000 3
+mpirun ./relaxation 10000 3
