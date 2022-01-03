@@ -22,7 +22,6 @@ int decimal_precision;
 double decimal_value;
 int value_change_flag;
 int matrix_size;
-double* matrix;
 
 
 // Returns array of doubles of length matrix_size^2
@@ -70,6 +69,12 @@ BLOCK* makeBlocks() {
         new_block.start_row = block_size*i + 1;
         new_block.end_row = block_size*(i+1);
 
+        new_block.padded_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1 + 2);
+        new_block.padded_matrix = (double*)malloc(new_block.padded_matrix_size*sizeof(double));
+        
+        new_block.mutated_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1);
+        new_block.mutated_matrix = (double*)malloc(new_block.mutated_matrix_size*sizeof(double));
+
         blocks[i] = new_block;
     }
 
@@ -79,6 +84,12 @@ BLOCK* makeBlocks() {
         new_block.start_row = mutable_matrix_size - block_size - extra + 1;
         new_block.end_row = mutable_matrix_size;
 
+        new_block.padded_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1 + 2);
+        new_block.padded_matrix = (double*)malloc(new_block.padded_matrix_size*sizeof(double));
+        
+        new_block.mutated_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1);
+        new_block.mutated_matrix = (double*)malloc(new_block.mutated_matrix_size*sizeof(double));
+
         blocks[consumer_count-1] = new_block;
     }
 
@@ -86,15 +97,42 @@ BLOCK* makeBlocks() {
 }
 
 
-// Prints out matrix as table, and highlights each block
-void printMatrix(double* matrix) {
-    for (int i=0 ; i<matrix_size ; i++) {
-        printf("\n");
-        printf("%d  ", i);
-        for (int j=0 ; j<matrix_size ; j++){
-            int index = i*matrix_size + j;
-            printf("%f, ", matrix[i*matrix_size + j]);
+// Perform relaxation iteration on a matrix
+void relaxMatrix(BLOCK* block) {
+
+    double* old_padded_matrix = block->padded_matrix;
+    double* new_matrix = block->mutated_matrix;
+
+    for (int i=0 ; i<block->mutated_matrix_size ; i++) {
+        if (i%matrix_size != 0 && (i+1)%matrix_size != 0) {
+            new_matrix[i] = getSuroundingAverage(&old_padded_matrix[matrix_size+i]);
+        } else {
+            new_matrix[i] = old_padded_matrix[matrix_size+i];
         }
+    }
+
+}
+
+
+// Returns the average of the four cells surrounding a cell at a given index
+double getSuroundingAverage(double* cell) {
+    double top_value = *(cell - matrix_size);
+    double right_value = *(cell + 1);
+    double bottom_value = *(cell + matrix_size);
+    double left_value = *(cell - 1);
+
+    return (top_value + right_value + bottom_value + left_value)/4;
+}
+
+
+// Prints out matrix as table, and highlights each block
+void printMatrix(double* matrix, int length) {
+    for (int i=0 ; i<length ; i++) {
+        if (i%matrix_size == 0) {
+            printf("\n");
+            printf("%d  ", i/matrix_size);
+        }
+        printf("%f, ", matrix[i]);
     }
     printf("\n\n");
 }
@@ -126,7 +164,7 @@ int main(int argc, char** argv) {
     matrix_size = atoi(argv[1]);
     decimal_precision = atoi(argv[2]);
     decimal_value = pow(0.1, decimal_precision);
-    matrix = makeMatrix();
+    double* matrix = makeMatrix();
 
 
     // Relaxation start
@@ -135,60 +173,56 @@ int main(int argc, char** argv) {
 
     if (rank == 0) {
         printBlocks(blocks);
-        //printMatrix();
     }
-    //printf("Hello: rank %d, world: %d\n", rank, world);
 
-    int my_padded_block_size;
-    double* my_padded_block;
-    
+    BLOCK my_block;
     if (rank != 0) {
-        my_padded_block_size = matrix_size * (blocks[rank-1].end_row - blocks[rank-1].start_row + 2);
-        my_padded_block = (double*)malloc(my_padded_block_size*sizeof(double));
+        my_block = blocks[rank-1];
     }
 
     // relaxation loop, do this until the values are unchanged to given precision
-    for (int l=0 ; l<2 ; l++) {
+    for (int l=0 ; l<100 ; l++) {
 
         // process with rank 0 is provider, other processes are consumers
         if (rank == 0) {
 
             // send appropriate rows to each consumer
             for (int i=0 ; i<consumer_count ; i++) {
-                int padded_block_size = matrix_size * (blocks[i].end_row - blocks[i].start_row + 2);
-                double* padded_block_start_pointer = matrix + matrix_size * (blocks[i].start_row-1);
-                printf("Provider sending block to rank %d\n", i+1);
-                MPI_Send(padded_block_start_pointer, padded_block_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD);
+                double* start_pointer = matrix + matrix_size * (blocks[i].start_row-1);
+                //printf("Provider sending block to rank %d\n", i+1);
+                MPI_Send(start_pointer, blocks[i].padded_matrix_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD);
             }
 
             // then get responses from each consumer
             for (int i=0 ; i<consumer_count ; i++) {
-                int block_size = matrix_size * (blocks[i].end_row - blocks[i].start_row);
                 double* block_start_pointer = matrix + matrix_size * blocks[i].start_row;
                 MPI_Status stat;
-                MPI_Recv(block_start_pointer, block_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD, &stat);
-                printf("Provider received response from consumer %d\n", stat.MPI_SOURCE);
+                MPI_Recv(block_start_pointer, blocks[i].mutated_matrix_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD, &stat);
+                //printf("Provider received response from consumer %d\n", stat.MPI_SOURCE);
             }
 
         } else {
 
             // receive new block from provider
             MPI_Status stat;
-            MPI_Recv(my_padded_block, my_padded_block_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD, &stat);
-            printf("Consumer %d received block\n", rank);
+            MPI_Recv(my_block.padded_matrix, my_block.padded_matrix_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD, &stat);
+            //printf("Consumer %d received block\n", rank);
+
+            relaxMatrix(&my_block);
 
             // communicate back to provider
-            printf("Consumer %d sending response\n", rank);
-            double* block_start = my_padded_block + matrix_size;
-            int block_size = my_padded_block_size - matrix_size*2;
-            MPI_Send(block_start, block_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD);
+            //printf("Consumer %d sending response\n", rank);
+            MPI_Send(my_block.mutated_matrix, my_block.mutated_matrix_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD);
 
         }
 
     }
-    //MPI_Bcast(matrix, matrix_size*matrix_size, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    //printf("From rank %d\n", rank);
-    //printMatrix();
+
+    sleep(1);
+    if (rank == 0) {
+        printMatrix(matrix, matrix_size*matrix_size);
+    }
+
     //----------------------------
     
     
