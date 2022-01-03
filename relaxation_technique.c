@@ -69,11 +69,11 @@ BLOCK* makeBlocks() {
         new_block.start_row = block_size*i + 1;
         new_block.end_row = block_size*(i+1);
 
-        new_block.padded_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1 + 2);
-        new_block.padded_matrix = (double*)malloc(new_block.padded_matrix_size*sizeof(double));
+        new_block.input_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1 + 2);
+        new_block.input_matrix = (double*)malloc(new_block.input_matrix_size*sizeof(double));
         
-        new_block.mutated_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1);
-        new_block.mutated_matrix = (double*)malloc(new_block.mutated_matrix_size*sizeof(double));
+        new_block.output_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1);
+        new_block.output_matrix = (double*)malloc(new_block.output_matrix_size*sizeof(double));
 
         blocks[i] = new_block;
     }
@@ -84,11 +84,11 @@ BLOCK* makeBlocks() {
         new_block.start_row = mutable_matrix_size - block_size - extra + 1;
         new_block.end_row = mutable_matrix_size;
 
-        new_block.padded_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1 + 2);
-        new_block.padded_matrix = (double*)malloc(new_block.padded_matrix_size*sizeof(double));
+        new_block.input_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1 + 2);
+        new_block.input_matrix = (double*)malloc(new_block.input_matrix_size*sizeof(double));
         
-        new_block.mutated_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1);
-        new_block.mutated_matrix = (double*)malloc(new_block.mutated_matrix_size*sizeof(double));
+        new_block.output_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1);
+        new_block.output_matrix = (double*)malloc(new_block.output_matrix_size*sizeof(double));
 
         blocks[consumer_count-1] = new_block;
     }
@@ -98,23 +98,32 @@ BLOCK* makeBlocks() {
 
 
 // Perform relaxation iteration on a matrix
-void relaxMatrix(BLOCK* block) {
+int relaxMatrix(BLOCK* block) {
 
-    double* old_padded_matrix = block->padded_matrix;
-    double* new_matrix = block->mutated_matrix;
+    double* old_padded_matrix = block->input_matrix;
+    double* new_matrix = block->output_matrix;
 
-    for (int i=0 ; i<block->mutated_matrix_size ; i++) {
+    int value_change_flag = 0;
+
+    for (int i=0 ; i<block->output_matrix_size ; i++) {
         if (i%matrix_size != 0 && (i+1)%matrix_size != 0) {
-            new_matrix[i] = getSuroundingAverage(&old_padded_matrix[matrix_size+i]);
+            double new_value = getSuroundingAverage(&old_padded_matrix[matrix_size+i]);
+            double diff = new_value - old_padded_matrix[matrix_size+i];
+            if (diff > decimal_value) {
+                value_change_flag = 1;
+            }
+            new_matrix[i] = new_value;
         } else {
             new_matrix[i] = old_padded_matrix[matrix_size+i];
         }
     }
 
+    return value_change_flag;
+
 }
 
 
-// Returns the average of the four cells surrounding a cell at a given index
+// Returns the average of the four cells surrounding a given cell
 double getSuroundingAverage(double* cell) {
     double top_value = *(cell - matrix_size);
     double right_value = *(cell + 1);
@@ -181,7 +190,7 @@ int main(int argc, char** argv) {
     }
 
     // relaxation loop, do this until the values are unchanged to given precision
-    for (int l=0 ; l<100 ; l++) {
+    for (int l=0 ; l<1 ; l++) {
 
         // process with rank 0 is provider, other processes are consumers
         if (rank == 0) {
@@ -189,30 +198,27 @@ int main(int argc, char** argv) {
             // send appropriate rows to each consumer
             for (int i=0 ; i<consumer_count ; i++) {
                 double* start_pointer = matrix + matrix_size * (blocks[i].start_row-1);
-                //printf("Provider sending block to rank %d\n", i+1);
-                MPI_Send(start_pointer, blocks[i].padded_matrix_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD);
+                MPI_Send(start_pointer, blocks[i].input_matrix_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD);
             }
 
             // then get responses from each consumer
             for (int i=0 ; i<consumer_count ; i++) {
-                double* block_start_pointer = matrix + matrix_size * blocks[i].start_row;
+                double* start_pointer = matrix + matrix_size * blocks[i].start_row;
                 MPI_Status stat;
-                MPI_Recv(block_start_pointer, blocks[i].mutated_matrix_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD, &stat);
-                //printf("Provider received response from consumer %d\n", stat.MPI_SOURCE);
+                MPI_Recv(start_pointer, blocks[i].output_matrix_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD, &stat);
             }
 
         } else {
 
             // receive new block from provider
             MPI_Status stat;
-            MPI_Recv(my_block.padded_matrix, my_block.padded_matrix_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD, &stat);
-            //printf("Consumer %d received block\n", rank);
+            MPI_Recv(my_block.input_matrix, my_block.input_matrix_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD, &stat);
 
-            relaxMatrix(&my_block);
+            // perform relaxation on assigned block, detect if any value has changed
+            int value_change_flag = relaxMatrix(&my_block);
 
-            // communicate back to provider
-            //printf("Consumer %d sending response\n", rank);
-            MPI_Send(my_block.mutated_matrix, my_block.mutated_matrix_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD);
+            // communicate relaxed block back to provider
+            MPI_Send(my_block.output_matrix, my_block.output_matrix_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD);
 
         }
 
@@ -222,7 +228,6 @@ int main(int argc, char** argv) {
     if (rank == 0) {
         printMatrix(matrix, matrix_size*matrix_size);
     }
-
     //----------------------------
     
     
