@@ -10,7 +10,7 @@ typedef struct block {
 double* makeMatrix();
 BLOCK* makeBlocks();
 
-int relaxMatrix(BLOCK* block);
+void relaxMatrix(BLOCK* block);
 double getSuroundingAverage(double* cell);
 
 void printMatrix();

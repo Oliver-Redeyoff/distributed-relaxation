@@ -20,7 +20,6 @@
 int consumer_count;
 int decimal_precision;
 double decimal_value;
-int value_change_flag;
 int matrix_size;
 
 
@@ -72,7 +71,7 @@ BLOCK* makeBlocks() {
         new_block.input_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1 + 2);
         new_block.input_matrix = (double*)malloc(new_block.input_matrix_size*sizeof(double));
         
-        new_block.output_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1);
+        new_block.output_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1) + 1;
         new_block.output_matrix = (double*)malloc(new_block.output_matrix_size*sizeof(double));
 
         blocks[i] = new_block;
@@ -87,7 +86,7 @@ BLOCK* makeBlocks() {
         new_block.input_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1 + 2);
         new_block.input_matrix = (double*)malloc(new_block.input_matrix_size*sizeof(double));
         
-        new_block.output_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1);
+        new_block.output_matrix_size = matrix_size * (new_block.end_row-new_block.start_row+1) + 1;
         new_block.output_matrix = (double*)malloc(new_block.output_matrix_size*sizeof(double));
 
         blocks[consumer_count-1] = new_block;
@@ -98,19 +97,19 @@ BLOCK* makeBlocks() {
 
 
 // Perform relaxation iteration on a matrix
-int relaxMatrix(BLOCK* block) {
+void relaxMatrix(BLOCK* block) {
 
     double* old_padded_matrix = block->input_matrix;
-    double* new_matrix = block->output_matrix;
+    double* new_matrix = block->output_matrix + 1;
 
-    int value_change_flag = 0;
+    int value_changed_flag = 0.0;
 
-    for (int i=0 ; i<block->output_matrix_size ; i++) {
+    for (int i=0 ; i<block->output_matrix_size-1 ; i++) {
         if (i%matrix_size != 0 && (i+1)%matrix_size != 0) {
             double new_value = getSuroundingAverage(&old_padded_matrix[matrix_size+i]);
             double diff = new_value - old_padded_matrix[matrix_size+i];
             if (diff > decimal_value) {
-                value_change_flag = 1;
+                value_changed_flag = 1.0;
             }
             new_matrix[i] = new_value;
         } else {
@@ -118,7 +117,7 @@ int relaxMatrix(BLOCK* block) {
         }
     }
 
-    return value_change_flag;
+    block->output_matrix[0] = value_changed_flag;
 
 }
 
@@ -139,7 +138,7 @@ void printMatrix(double* matrix, int length) {
     for (int i=0 ; i<length ; i++) {
         if (i%matrix_size == 0) {
             printf("\n");
-            printf("%d  ", i/matrix_size);
+            //printf("%d  ", i/matrix_size);
         }
         printf("%f, ", matrix[i]);
     }
@@ -174,6 +173,8 @@ int main(int argc, char** argv) {
     decimal_precision = atoi(argv[2]);
     decimal_value = pow(0.1, decimal_precision);
     double* matrix = makeMatrix();
+    double start_time;
+    double end_time;
 
 
     // Relaxation start
@@ -181,7 +182,8 @@ int main(int argc, char** argv) {
     BLOCK* blocks = makeBlocks();
 
     if (rank == 0) {
-        printBlocks(blocks);
+        //printBlocks(blocks);
+        start_time = MPI_Wtime();
     }
 
     BLOCK my_block;
@@ -190,7 +192,7 @@ int main(int argc, char** argv) {
     }
 
     // relaxation loop, do this until the values are unchanged to given precision
-    for (int l=0 ; l<1 ; l++) {
+    while (1) {
 
         // process with rank 0 is provider, other processes are consumers
         if (rank == 0) {
@@ -202,11 +204,30 @@ int main(int argc, char** argv) {
             }
 
             // then get responses from each consumer
+            int block_changed_flag = 0;
             for (int i=0 ; i<consumer_count ; i++) {
-                double* start_pointer = matrix + matrix_size * blocks[i].start_row;
+                double* start_pointer = matrix + matrix_size * blocks[i].start_row - 1;
+                double start_value = *start_pointer;
+                
                 MPI_Status stat;
                 MPI_Recv(start_pointer, blocks[i].output_matrix_size, MPI_DOUBLE, i+1, 99, MPI_COMM_WORLD, &stat);
+
+                int value_changed_flag = (int)*start_pointer;
+                *start_pointer = start_value;
+
+                if (value_changed_flag == 1) {
+                    block_changed_flag = 1;
+                }
             }
+
+            if (block_changed_flag == 0) {
+                end_time = MPI_Wtime();
+                break;
+            }
+
+            // usleep(50000);
+            // system("clear");
+            // printMatrix(matrix, matrix_size*matrix_size);
 
         } else {
 
@@ -215,7 +236,7 @@ int main(int argc, char** argv) {
             MPI_Recv(my_block.input_matrix, my_block.input_matrix_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD, &stat);
 
             // perform relaxation on assigned block, detect if any value has changed
-            int value_change_flag = relaxMatrix(&my_block);
+            relaxMatrix(&my_block);
 
             // communicate relaxed block back to provider
             MPI_Send(my_block.output_matrix, my_block.output_matrix_size, MPI_DOUBLE, 0, 99, MPI_COMM_WORLD);
@@ -223,15 +244,13 @@ int main(int argc, char** argv) {
         }
 
     }
-
-    sleep(1);
-    if (rank == 0) {
-        printMatrix(matrix, matrix_size*matrix_size);
-    }
     //----------------------------
+
+    printMatrix(matrix, matrix_size*matrix_size);
+    printf("Took %f to complete\n", end_time-start_time);
     
-    
+    MPI_Abort(MPI_COMM_WORLD, 1);
     MPI_Finalize();
-    return 0;
+    return 1;
 
 }
