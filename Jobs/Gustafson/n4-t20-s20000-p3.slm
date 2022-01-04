@@ -6,5 +6,4 @@
 #SBATCH --ntasks-per-node=20
 #SBATCH --time=00:20:00
 
-mpicc -Wall -o relaxation relaxation_technique.c -lm
-mpirun ./relaxation 20000 3
+mpirun ../../relaxation 20000 3

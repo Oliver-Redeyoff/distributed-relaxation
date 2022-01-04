@@ -6,5 +6,4 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --time=00:20:00
 
-make s
-./relaxation_seq 30000 3
+../../relaxation_seq 30000 3
