@@ -1,0 +1,10 @@
+#!/bin/sh
+#SBATCH --account=cm30225
+#SBATCH --partition=teaching
+#SBATCH --job-name=n1-t1-s10000-p3
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --time=00:20:00
+
+make s
+./relaxation_seq 10000 3
