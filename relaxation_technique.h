@@ -34,4 +34,3 @@ void relaxMatrix(BLOCK* block);
 double getSuroundingAverage(double* cell);
 
 void printMatrix();
-void printBlocks(BLOCK* blocks);
